@@ -1,0 +1,233 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Kidney Care Plan: GFR + UACR + KDIGO Map</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    input, textarea, select, button { width: 100%; margin: 5px 0; padding: 8px; }
+    h1, h2 { color: #2c3e50; }
+    label { font-weight: bold; display: block; margin-top: 10px; }
+    .section { margin-top: 20px; }
+    canvas { margin-top: 20px; }
+    #exportBtn { background: #3498db; color: white; font-weight: bold; font-size: 16px; }
+    #parsedSummary { font-size: 16px; font-weight: bold; margin-top: 10px; }
+    .chart-container { width: 100%; height: 300px; margin-bottom: 30px; }
+    #heatmapTable td, #heatmapTable th {
+        padding: 6px; text-align: center; border: 1px solid #aaa;
+        width: 60px; height: 40px; font-weight: bold;
+    }
+    #heatmapTable {
+        margin-top: 20px; border-collapse: collapse;
+    }
+    .green { background-color: #b6ffb6; }
+    .yellow { background-color: #fff79a; }
+    .orange { background-color: #ffc78a; }
+    .red { background-color: #ff7b7b; }
+  </style>
+</head>
+<body>
+  <h1>Kidney Care Plan</h1>
+
+  <div class="section">
+    <label>Patient Name</label>
+    <input type="text" id="name" />
+    <label>Date</label>
+    <input type="date" id="date" />
+  </div>
+
+  <div class="section">
+    <label>Paste Lab Notes or Text</label>
+    <textarea id="labInput" rows="10" placeholder="Paste multiple lines here..."></textarea>
+    <button onclick="parseAndPlot()">Parse and Plot Charts</button>
+  </div>
+
+  <div id="parsedSummary"></div>
+
+  <div class="chart-container">
+    <canvas id="gfrChart"></canvas>
+  </div>
+  <div class="chart-container">
+    <canvas id="uacrChart"></canvas>
+  </div>
+
+  <div id="kdigoHeatmap">
+    <h2>KDIGO Risk Heat Map (Patient Cell Arrow)</h2>
+    <p>This chart helps classify CKD risk by combining GFR stage and albuminuria level.</p>
+    <table id="heatmapTable">
+      <tr><th>UACR ↓ / GFR →</th><th>&ge; 90</th><th>60–89</th><th>45–59</th><th>30–44</th><th>15–29</th><th>&lt;15</th></tr>
+      <tr><th>&lt; 30 (A1)</th><td class="green">G1A1</td><td class="green">G2A1</td><td class="yellow">G3aA1</td><td class="yellow">G3bA1</td><td class="orange">G4A1</td><td class="red">G5A1</td></tr>
+      <tr><th>30–300 (A2)</th><td class="yellow">G1A2</td><td class="yellow">G2A2</td><td class="orange">G3aA2</td><td class="orange">G3bA2</td><td class="red">G4A2</td><td class="red">G5A2</td></tr>
+      <tr><th>&gt; 300 (A3)</th><td class="orange">G1A3</td><td class="orange">G2A3</td><td class="red">G3aA3</td><td class="red">G3bA3</td><td class="red">G4A3</td><td class="red">G5A3</td></tr>
+    </table>
+  </div>
+
+  <div class="section">
+    <label>Follow-up Plan</label>
+    <textarea id="followup" rows="4">Continue kidney protective therapy. Recheck labs in 3 months.</textarea>
+  </div>
+
+  <button id="exportBtn" onclick="exportToPDF()">Export to PDF</button>
+
+  <script>
+    let gfrChart, uacrChart;
+
+    function parseAndPlot() {
+      const text = document.getElementById("labInput").value;
+      const lines = text.split(/\n|;/);
+      const dates = [], gfrs = [], uacrs = [];
+
+      lines.forEach(line => {
+        const dateMatch = line.match(/(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/);
+        const gfrMatch = line.match(/\b(?:e?GFR)\s*[:=\-]?\s*(\d{1,3})\b/i);
+        const uacrMatch = line.match(/\bUACR\s*[:=\-]?\s*(\d{1,5})\b/i);
+
+        if (dateMatch && (gfrMatch || uacrMatch)) {
+          dates.push(dateMatch[1]);
+          gfrs.push(gfrMatch ? parseInt(gfrMatch[1]) : null);
+          uacrs.push(uacrMatch ? parseInt(uacrMatch[1]) : null);
+        }
+      });
+
+      let summary = "";
+      if (gfrs.length) {
+        const latestGFR = gfrs[gfrs.length - 1];
+        summary += `CKD Stage: ${latestGFR >= 90 ? '1' : latestGFR >= 60 ? '2' : latestGFR >= 45 ? '3a' : latestGFR >= 30 ? '3b' : latestGFR >= 15 ? '4' : '5'}`;
+      }
+      if (uacrs.length) {
+        const latestUACR = uacrs.filter(v => v !== null).pop();
+        summary += ` | Albuminuria: ${latestUACR < 30 ? 'A1' : latestUACR <= 300 ? 'A2' : 'A3'}`;
+      }
+      
+      // Parse date and sort entries
+      const parsedData = [];
+      lines.forEach(line => {
+        const dateMatch = line.match(/(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/);
+        const gfrMatch = line.match(/\b(?:e?GFR)\s*[:=\-]?\s*(\d{1,3})\b/i);
+        if (dateMatch && gfrMatch) {
+          const rawDate = new Date(dateMatch[1]);
+          const gfrVal = parseInt(gfrMatch[1]);
+          if (!isNaN(gfrVal)) parsedData.push({ date: rawDate, gfr: gfrVal });
+        }
+      });
+
+      parsedData.sort((a, b) => a.date - b.date);
+
+      // Compute 3-month average GFR
+      const now = new Date();
+      const threeMonthsAgo = new Date(now.setMonth(now.getMonth() - 3));
+      const recentGFRs = parsedData.filter(entry => entry.date >= threeMonthsAgo).map(entry => entry.gfr);
+      const avg3moGFR = recentGFRs.length ? Math.round(recentGFRs.reduce((a,b)=>a+b)/recentGFRs.length) : null;
+
+      if (avg3moGFR !== null) {
+        summary += ` | Avg GFR (3 mo): ${avg3moGFR}`;
+      }
+
+      // Compute GFR slope
+      if (parsedData.length >= 2) {
+        const first = parsedData[0];
+        const last = parsedData[parsedData.length - 1];
+        const deltaGFR = last.gfr - first.gfr;
+        const deltaYears = (last.date - first.date) / (1000 * 60 * 60 * 24 * 365.25);
+        const slope = deltaGFR / deltaYears;
+        const slopeText = slope.toFixed(1);
+        summary += ` | GFR slope: ${slopeText} mL/min/yr`;
+        if (slope < -5) {
+          summary += " 🔴 Rapid decline!";
+        }
+      }
+
+document.getElementById("parsedSummary").innerText = summary;
+
+      // Highlight KDIGO cell with arrow
+      const kdigoTable = document.getElementById("heatmapTable");
+      let gfr = gfrs[gfrs.length - 1];
+      let uacr = uacrs.filter(v => v !== null).pop();
+      let gStage = gfr >= 90 ? 1 : gfr >= 60 ? 2 : gfr >= 45 ? 3 : gfr >= 30 ? 4 : gfr >= 15 ? 5 : 6;
+      let aStage = uacr < 30 ? 1 : uacr <= 300 ? 2 : 3;
+      const cellMap = {
+        "1_1": [1,1], "2_1": [1,2], "3_1": [1,3], "4_1": [1,4], "5_1": [1,5], "6_1": [1,6],
+        "1_2": [2,1], "2_2": [2,2], "3_2": [2,3], "4_2": [2,4], "5_2": [2,5], "6_2": [2,6],
+        "1_3": [3,1], "2_3": [3,2], "3_3": [3,3], "4_3": [3,4], "5_3": [3,5], "6_3": [3,6]
+      };
+      const key = gStage + "_" + aStage;
+      if (cellMap[key]) {
+        const [row, col] = cellMap[key];
+        kdigoTable.rows[row].cells[col].innerHTML += " ←";
+      }
+
+      const gctx = document.getElementById("gfrChart").getContext("2d");
+      if (gfrChart) gfrChart.destroy();
+      gfrChart = new Chart(gctx, {
+        type: "line",
+        data: {
+          labels: dates,
+          datasets: [{
+            label: "GFR Trend",
+            data: gfrs,
+            borderColor: "blue",
+            backgroundColor: "rgba(0,0,255,0.1)",
+            tension: 0.3,
+            spanGaps: true
+          }]
+        },
+        options: {
+          scales: {
+            x: { ticks: { font: { size: 14 } }, reverse: true },
+            y: { beginAtZero: true, title: { display: true, text: 'GFR' } }
+          }
+        }
+      });
+
+      const uctx = document.getElementById("uacrChart").getContext("2d");
+      if (uacrChart) uacrChart.destroy();
+      uacrChart = new Chart(uctx, {
+        type: "line",
+        data: {
+          labels: dates,
+          datasets: [{
+            label: "UACR Trend",
+            data: uacrs,
+            borderColor: "red",
+            backgroundColor: "rgba(255,0,0,0.1)",
+            tension: 0.3,
+            spanGaps: true
+          }]
+        },
+        options: {
+          scales: {
+            x: { ticks: { font: { size: 14 } }, reverse: true },
+            y: { beginAtZero: true, title: { display: true, text: 'UACR' } }
+          }
+        }
+      });
+    }
+
+    async function exportToPDF() {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+      const name = document.getElementById("name").value;
+      const date = document.getElementById("date").value;
+      const followup = document.getElementById("followup").value;
+      const summary = document.getElementById("parsedSummary").innerText;
+
+      doc.setFontSize(12);
+      doc.text(`Kidney Care Plan`, 10, 10);
+      doc.text(`Patient: ${name}`, 10, 20);
+      doc.text(`Date: ${date}`, 10, 30);
+      doc.text(`Summary: ${summary}`, 10, 40);
+      doc.text(`Follow-up Plan:`, 10, 50);
+      doc.text(doc.splitTextToSize(followup, 180), 10, 60);
+
+      const gfrCanvas = document.getElementById("gfrChart");
+      const uacrCanvas = document.getElementById("uacrChart");
+      doc.addImage(gfrCanvas.toDataURL("image/png"), 'PNG', 10, 90, 180, 50);
+      doc.addImage(uacrCanvas.toDataURL("image/png"), 'PNG', 10, 145, 180, 50);
+
+      doc.save("kidney_care_plan_full.pdf");
+    }
+  </script>
+</body>
+</html>
